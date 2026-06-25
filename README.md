@@ -7,6 +7,10 @@ The bundled operation catalog is generated from `https://docs.clockodo.com/opena
 ## Tools
 
 - `clockodo_server_info` - inspect catalog version, operation coverage, runtime safety settings, and native MCP comparison notes.
+- `clockodo_current_time` - get current UTC/local time for reliable relative date calculations.
+- `clockodo_me` - get the current authenticated Clockodo user.
+- `clockodo_get_my_absences` - read absences for the authenticated user.
+- `clockodo_get_entries_by_timeframe` - read entries for common relative timeframes or a custom date range.
 - `clockodo_list_operations` - search current non-deprecated operations.
 - `clockodo_get_operation` - inspect one operation, including query/path parameters and top-level JSON body fields.
 - `clockodo_read` - call current non-deprecated `GET` operations.
@@ -21,7 +25,8 @@ This project is intentionally different:
 - local stdio transport, so API credentials can stay in an ignored `.env` file via `scripts/run-clockodo-mcp`;
 - full generated wrapper over the current, non-deprecated OpenAPI operations instead of only the selected native MCP tools;
 - explicit `clockodo_read` and `clockodo_write` split plus optional `CLOCKODO_READ_ONLY=true`;
-- `clockodo_get_operation` and `clockodo_server_info` for agent-side discovery before touching data.
+- `clockodo_get_operation` and `clockodo_server_info` for agent-side discovery before touching data;
+- small read-only convenience tools for current user, own absences, and timeframe-based entry reads.
 
 ## Install
 
@@ -103,6 +108,19 @@ Call a read operation:
   "operationId": "getUsersMeV4"
 }
 ```
+
+Read entries for an inclusive custom date range:
+
+```json
+{
+  "timeframe": "custom",
+  "timeZone": "Europe/Zurich",
+  "dateSince": "2026-06-01",
+  "dateUntil": "2026-06-30"
+}
+```
+
+Supported `timeframe` values: `today`, `yesterday`, `this_week`, `last_week`, `this_month`, `last_month`, `custom`.
 
 Call a write operation:
 

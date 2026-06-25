@@ -11,6 +11,7 @@ var tests = new (string Name, Func<Task> Run)[]
 {
     ("catalog filters deprecated operations", CatalogFiltersDeprecatedOperations),
     ("server info reports catalog and runtime state", ServerInfoReportsCatalogAndRuntimeState),
+    ("convenience tools build expected requests", ConvenienceToolsBuildExpectedRequests),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
@@ -79,8 +80,89 @@ static Task ServerInfoReportsCatalogAndRuntimeState()
     Assert(root.GetProperty("runtime").GetProperty("readOnly").GetBoolean(), "Expected read-only runtime state.");
     Assert(!root.GetProperty("runtime").GetProperty("credentialsConfigured").GetBoolean(), "Server info must not claim missing credentials are configured.");
     Assert(!info.Contains("secret", StringComparison.OrdinalIgnoreCase), "Server info must not contain credential values.");
+    Assert(info.Contains("clockodo_get_entries_by_timeframe", StringComparison.Ordinal), "Server info should list convenience tools.");
 
     return Task.CompletedTask;
+}
+
+static async Task ConvenienceToolsBuildExpectedRequests()
+{
+    var currentTime = ClockodoTools.CurrentTime("Europe/Zurich");
+    using (var document = JsonDocument.Parse(currentTime))
+    {
+        AssertEqual("Europe/Zurich", document.RootElement.GetProperty("timeZone").GetString(), "Unexpected current time zone.");
+        Assert(document.RootElement.TryGetProperty("utc", out _), "Current time should include UTC time.");
+    }
+
+    var meHandler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+    {
+        Content = new StringContent("""{"data":{"id":7}}""", Encoding.UTF8, "application/json")
+    });
+
+    await ClockodoTools.Me(CreateClient(meHandler));
+    AssertEqual("/api/v4/users/me", meHandler.Request?.RequestUri?.AbsolutePath, "clockodo_me should call /v4/users/me.");
+
+    var absencesHandler = new QueueHandler(
+        JsonResponse("""{"data":{"id":7}}"""),
+        JsonResponse("""{"data":[]}"""));
+
+    var absencesResult = await ClockodoTools.GetMyAbsences(
+        CreateClient(absencesHandler),
+        year: 2026,
+        status: "approved",
+        scope: "extended");
+
+    AssertEqual("/api/v4/users/me", absencesHandler.Requests[0].RequestUri?.AbsolutePath, "clockodo_get_my_absences should resolve the current user first.");
+    AssertEqual("/api/v4/absences", absencesHandler.Requests[1].RequestUri?.AbsolutePath, "clockodo_get_my_absences should call /v4/absences.");
+
+    var absencesQuery = Uri.UnescapeDataString(absencesHandler.Requests[1].RequestUri?.Query ?? "");
+    Assert(absencesQuery.Contains("filter[users_id]=7", StringComparison.Ordinal), "Expected users_id absence filter.");
+    Assert(absencesQuery.Contains("filter[year]=2026", StringComparison.Ordinal), "Expected year absence filter.");
+    Assert(absencesQuery.Contains("filter[status]=approved", StringComparison.Ordinal), "Expected status absence filter.");
+    Assert(absencesQuery.Contains("scope=extended", StringComparison.Ordinal), "Expected absence scope query.");
+
+    using (var document = JsonDocument.Parse(absencesResult))
+    {
+        AssertEqual(7L, document.RootElement.GetProperty("usersId").GetInt64(), "Unexpected resolved absence user id.");
+        Assert(document.RootElement.GetProperty("clockodo").GetProperty("ok").GetBoolean(), "Expected wrapped absence response.");
+    }
+
+    var entriesHandler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+    {
+        Content = new StringContent("""{"data":{"entries":[]}}""", Encoding.UTF8, "application/json")
+    });
+
+    var entriesResult = await ClockodoTools.GetEntriesByTimeframe(
+        CreateClient(entriesHandler),
+        timeframe: "custom",
+        timeZone: "Europe/Zurich",
+        dateSince: "2026-06-01",
+        dateUntil: "2026-06-03",
+        usersId: 7,
+        projectsId: 42,
+        itemsPerPage: 100);
+
+    var request = entriesHandler.Request ?? throw new InvalidOperationException("Expected an entries request.");
+    var query = Uri.UnescapeDataString(request.RequestUri?.Query ?? "");
+
+    AssertEqual("/api/v2/entries", request.RequestUri?.AbsolutePath, "Unexpected entries path.");
+    Assert(query.Contains("time_since=2026-05-31T22:00:00Z", StringComparison.Ordinal), "Expected Europe/Zurich custom start converted to UTC.");
+    Assert(query.Contains("time_until=2026-06-03T22:00:00Z", StringComparison.Ordinal), "Expected inclusive custom end converted to next-day UTC.");
+    Assert(query.Contains("filter[users_id]=7", StringComparison.Ordinal), "Expected users_id filter.");
+    Assert(query.Contains("filter[projects_id]=42", StringComparison.Ordinal), "Expected projects_id filter.");
+    Assert(query.Contains("items_per_page=100", StringComparison.Ordinal), "Expected items_per_page query.");
+
+    using (var document = JsonDocument.Parse(entriesResult))
+    {
+        var root = document.RootElement;
+        AssertEqual("custom", root.GetProperty("timeframe").GetString(), "Unexpected timeframe.");
+        AssertEqual("2026-06-01", root.GetProperty("dateSince").GetString(), "Unexpected resolved dateSince.");
+        AssertEqual("2026-06-03", root.GetProperty("dateUntil").GetString(), "Unexpected resolved dateUntil.");
+        Assert(root.GetProperty("clockodo").GetProperty("ok").GetBoolean(), "Expected wrapped Clockodo response.");
+    }
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.GetEntriesByTimeframe(CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))), timeframe: "custom"));
 }
 
 static Task OperationLookupRejectsDeprecatedIds()
@@ -206,6 +288,10 @@ static async Task StdioServerExposesAndInvokesTools()
     var toolNames = tools.Select(tool => tool.Name).ToArray();
 
     Assert(toolNames.Contains("clockodo_server_info"), "Missing clockodo_server_info tool.");
+    Assert(toolNames.Contains("clockodo_current_time"), "Missing clockodo_current_time tool.");
+    Assert(toolNames.Contains("clockodo_me"), "Missing clockodo_me tool.");
+    Assert(toolNames.Contains("clockodo_get_my_absences"), "Missing clockodo_get_my_absences tool.");
+    Assert(toolNames.Contains("clockodo_get_entries_by_timeframe"), "Missing clockodo_get_entries_by_timeframe tool.");
     Assert(toolNames.Contains("clockodo_list_operations"), "Missing clockodo_list_operations tool.");
     Assert(toolNames.Contains("clockodo_get_operation"), "Missing clockodo_get_operation tool.");
     Assert(toolNames.Contains("clockodo_read"), "Missing clockodo_read tool.");
@@ -216,6 +302,13 @@ static async Task StdioServerExposesAndInvokesTools()
         cancellationToken: cts.Token);
 
     Assert(ToolText(infoResult).Contains(ClockodoOperationCatalog.OpenApiVersion, StringComparison.Ordinal), "server info call did not return the OpenAPI version.");
+
+    var timeResult = await client.CallToolAsync(
+        "clockodo_current_time",
+        new Dictionary<string, object?> { ["timeZone"] = "Europe/Zurich" },
+        cancellationToken: cts.Token);
+
+    Assert(ToolText(timeResult).Contains("Europe/Zurich", StringComparison.Ordinal), "current time call did not return the requested time zone.");
 
     var listResult = await client.CallToolAsync(
         "clockodo_list_operations",
@@ -265,6 +358,11 @@ static ClockodoClient CreateClient(HttpMessageHandler handler)
 
     return new ClockodoClient(new HttpClient(handler), options);
 }
+
+static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+{
+    Content = new StringContent(json, Encoding.UTF8, "application/json")
+};
 
 static string Header(HttpRequestMessage request, string name) =>
     request.Headers.TryGetValues(name, out var values) ? values.Single() : "";
@@ -350,6 +448,25 @@ internal sealed class CapturingHandler(HttpResponseMessage response) : HttpMessa
         }
 
         return response;
+    }
+}
+
+internal sealed class QueueHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
+{
+    private readonly Queue<HttpResponseMessage> responses = new(responses);
+
+    public List<HttpRequestMessage> Requests { get; } = [];
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Requests.Add(request);
+
+        if (responses.Count == 0)
+        {
+            throw new InvalidOperationException("No queued HTTP response available.");
+        }
+
+        return Task.FromResult(responses.Dequeue());
     }
 }
 

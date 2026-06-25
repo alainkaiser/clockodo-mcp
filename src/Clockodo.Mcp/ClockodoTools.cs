@@ -6,7 +6,7 @@ using ModelContextProtocol.Server;
 
 namespace Clockodo.Mcp;
 
-public sealed class ClockodoTools
+public sealed partial class ClockodoTools
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -60,6 +60,13 @@ public sealed class ClockodoTools
                 "Deprecated OpenAPI operations are hidden and rejected.",
                 "GET operations use clockodo_read; POST, PUT, and DELETE operations use clockodo_write.",
                 "Set CLOCKODO_READ_ONLY=true to block all write operations at runtime."
+            },
+            convenienceTools = new[]
+            {
+                "clockodo_current_time",
+                "clockodo_me",
+                "clockodo_get_my_absences",
+                "clockodo_get_entries_by_timeframe"
             }
         }, JsonOptions);
     }
@@ -332,4 +339,5 @@ public sealed class ClockodoTools
 
         return path;
     }
+
 }
