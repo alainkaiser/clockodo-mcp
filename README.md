@@ -6,10 +6,22 @@ The bundled operation catalog is generated from `https://docs.clockodo.com/opena
 
 ## Tools
 
+- `clockodo_server_info` - inspect catalog version, operation coverage, runtime safety settings, and native MCP comparison notes.
 - `clockodo_list_operations` - search current non-deprecated operations.
 - `clockodo_get_operation` - inspect one operation, including query/path parameters and top-level JSON body fields.
 - `clockodo_read` - call current non-deprecated `GET` operations.
 - `clockodo_write` - call current non-deprecated `POST`, `PUT`, and `DELETE` operations.
+
+## Compared With Clockodo's Native MCP
+
+Clockodo documents a native HTTP MCP endpoint at `https://mcp.clockodo.com/mcp` using the MCP-specific headers `X-Clockodo-User` and `X-Clockodo-Key`.
+
+This project is intentionally different:
+
+- local stdio transport, so API credentials can stay in an ignored `.env` file via `scripts/run-clockodo-mcp`;
+- full generated wrapper over the current, non-deprecated OpenAPI operations instead of only the selected native MCP tools;
+- explicit `clockodo_read` and `clockodo_write` split plus optional `CLOCKODO_READ_ONLY=true`;
+- `clockodo_get_operation` and `clockodo_server_info` for agent-side discovery before touching data.
 
 ## Install
 
@@ -61,6 +73,12 @@ Claude Desktop, Cursor, Windsurf, and other stdio MCP clients:
 ```
 
 ## Usage
+
+Call `clockodo_server_info` without arguments to inspect server coverage and runtime safety state:
+
+```json
+{}
+```
 
 Find an operation:
 

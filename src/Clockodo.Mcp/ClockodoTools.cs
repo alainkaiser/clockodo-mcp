@@ -13,6 +13,57 @@ public sealed class ClockodoTools
         WriteIndented = true
     };
 
+    [McpServerTool(Name = "clockodo_server_info", ReadOnly = true, Destructive = false, OpenWorld = false)]
+    [Description("Shows Clockodo MCP catalog coverage, source version, runtime safety settings, and how this local server differs from Clockodo's native MCP endpoint.")]
+    public static string ServerInfo(ClockodoOptions options)
+    {
+        var all = ClockodoOperationCatalog.All;
+        var active = ClockodoOperationCatalog.Active;
+
+        return JsonSerializer.Serialize(new
+        {
+            source = ClockodoOperationCatalog.SourceUrl,
+            openApiVersion = ClockodoOperationCatalog.OpenApiVersion,
+            documentation = "https://docs.clockodo.com/",
+            operations = new
+            {
+                total = all.Count,
+                active = active.Count,
+                deprecatedHidden = all.Count - active.Count,
+                byMethod = active
+                    .GroupBy(operation => operation.Method)
+                    .OrderBy(group => group.Key)
+                    .ToDictionary(group => group.Key, group => group.Count()),
+                byTag = active
+                    .GroupBy(operation => operation.Tag)
+                    .OrderBy(group => group.Key)
+                    .ToDictionary(group => group.Key, group => group.Count())
+            },
+            runtime = new
+            {
+                transport = "stdio",
+                baseUrl = options.BaseUrl.ToString(),
+                acceptLanguage = options.AcceptLanguage,
+                readOnly = options.ReadOnly,
+                credentialsConfigured = !string.IsNullOrWhiteSpace(options.ApiUser) && !string.IsNullOrWhiteSpace(options.ApiKey),
+                restAuthenticationHeaders = new[] { "X-ClockodoApiUser", "X-ClockodoApiKey" }
+            },
+            nativeClockodoMcp = new
+            {
+                endpoint = "https://mcp.clockodo.com/mcp",
+                transport = "http",
+                authenticationHeaders = new[] { "X-Clockodo-User", "X-Clockodo-Key" },
+                documentedCoverage = "selected Clockodo API capabilities"
+            },
+            safety = new[]
+            {
+                "Deprecated OpenAPI operations are hidden and rejected.",
+                "GET operations use clockodo_read; POST, PUT, and DELETE operations use clockodo_write.",
+                "Set CLOCKODO_READ_ONLY=true to block all write operations at runtime."
+            }
+        }, JsonOptions);
+    }
+
     [McpServerTool(Name = "clockodo_list_operations", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Lists current, non-deprecated Clockodo REST API operations from the bundled OpenAPI catalog. Use this before clockodo_read or clockodo_write when you need the latest path, method, and parameters.")]
     public static string ListOperations(

@@ -10,6 +10,7 @@ using ModelContextProtocol.Protocol;
 var tests = new (string Name, Func<Task> Run)[]
 {
     ("catalog filters deprecated operations", CatalogFiltersDeprecatedOperations),
+    ("server info reports catalog and runtime state", ServerInfoReportsCatalogAndRuntimeState),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
@@ -53,6 +54,31 @@ static Task CatalogFiltersDeprecatedOperations()
     Assert(createService.Contains("\"requestBody\"", StringComparison.Ordinal), "Write operation details should include request body metadata.");
     Assert(createService.Contains("\"requiredProperties\"", StringComparison.Ordinal), "Request body metadata should include required properties.");
     Assert(createService.Contains("\"name\"", StringComparison.Ordinal), "createServiceV4 should document the required name body field.");
+
+    return Task.CompletedTask;
+}
+
+static Task ServerInfoReportsCatalogAndRuntimeState()
+{
+    var options = new ClockodoOptions(
+        ApiUser: null,
+        ApiKey: null,
+        ExternalApplication: "clockodo-mcp-test;user@example.com",
+        AcceptLanguage: "de",
+        BaseUrl: new Uri("https://my.clockodo.com/api/"),
+        ReadOnly: true);
+
+    var info = ClockodoTools.ServerInfo(options);
+    using var document = JsonDocument.Parse(info);
+    var root = document.RootElement;
+
+    AssertEqual(ClockodoOperationCatalog.OpenApiVersion, root.GetProperty("openApiVersion").GetString(), "Unexpected OpenAPI version.");
+    AssertEqual("https://mcp.clockodo.com/mcp", root.GetProperty("nativeClockodoMcp").GetProperty("endpoint").GetString(), "Unexpected native MCP endpoint.");
+    Assert(root.GetProperty("operations").GetProperty("active").GetInt32() > 100, "Expected active operation count.");
+    Assert(root.GetProperty("operations").GetProperty("deprecatedHidden").GetInt32() > 0, "Expected hidden deprecated operations.");
+    Assert(root.GetProperty("runtime").GetProperty("readOnly").GetBoolean(), "Expected read-only runtime state.");
+    Assert(!root.GetProperty("runtime").GetProperty("credentialsConfigured").GetBoolean(), "Server info must not claim missing credentials are configured.");
+    Assert(!info.Contains("secret", StringComparison.OrdinalIgnoreCase), "Server info must not contain credential values.");
 
     return Task.CompletedTask;
 }
@@ -179,10 +205,17 @@ static async Task StdioServerExposesAndInvokesTools()
     var tools = await client.ListToolsAsync(cancellationToken: cts.Token);
     var toolNames = tools.Select(tool => tool.Name).ToArray();
 
+    Assert(toolNames.Contains("clockodo_server_info"), "Missing clockodo_server_info tool.");
     Assert(toolNames.Contains("clockodo_list_operations"), "Missing clockodo_list_operations tool.");
     Assert(toolNames.Contains("clockodo_get_operation"), "Missing clockodo_get_operation tool.");
     Assert(toolNames.Contains("clockodo_read"), "Missing clockodo_read tool.");
     Assert(toolNames.Contains("clockodo_write"), "Missing clockodo_write tool.");
+
+    var infoResult = await client.CallToolAsync(
+        "clockodo_server_info",
+        cancellationToken: cts.Token);
+
+    Assert(ToolText(infoResult).Contains(ClockodoOperationCatalog.OpenApiVersion, StringComparison.Ordinal), "server info call did not return the OpenAPI version.");
 
     var listResult = await client.CallToolAsync(
         "clockodo_list_operations",

@@ -4,10 +4,34 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -f "$repo_dir/.env" ]]; then
+  clockodo_env_keys=(
+    CLOCKODO_API_USER
+    CLOCKODO_API_KEY
+    CLOCKODO_EXTERNAL_APPLICATION
+    CLOCKODO_ACCEPT_LANGUAGE
+    CLOCKODO_BASE_URL
+    CLOCKODO_READ_ONLY
+  )
+  clockodo_preserved_keys=()
+
+  for key in "${clockodo_env_keys[@]}"; do
+    if [[ ${!key+x} == x ]]; then
+      preserved_key="clockodo_mcp_preserved_${key}"
+      printf -v "$preserved_key" '%s' "${!key}"
+      clockodo_preserved_keys+=("$key")
+    fi
+  done
+
   set -a
   # shellcheck disable=SC1091
   source "$repo_dir/.env"
   set +a
+
+  for key in "${clockodo_preserved_keys[@]}"; do
+    preserved_key="clockodo_mcp_preserved_${key}"
+    export "$key=${!preserved_key}"
+    unset "$preserved_key"
+  done
 fi
 
 exec "$repo_dir/dist/Clockodo.Mcp" "$@"
