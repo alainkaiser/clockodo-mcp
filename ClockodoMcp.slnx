@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Clockodo.Mcp/Clockodo.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Clockodo.Mcp.Tests/Clockodo.Mcp.Tests.csproj" />
+  </Folder>
+</Solution>
