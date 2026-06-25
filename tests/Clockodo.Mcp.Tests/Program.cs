@@ -12,6 +12,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("catalog filters deprecated operations", CatalogFiltersDeprecatedOperations),
     ("server info reports catalog and runtime state", ServerInfoReportsCatalogAndRuntimeState),
     ("convenience tools build expected requests", ConvenienceToolsBuildExpectedRequests),
+    ("business tools build expected requests", BusinessToolsBuildExpectedRequests),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
@@ -81,6 +82,7 @@ static Task ServerInfoReportsCatalogAndRuntimeState()
     Assert(!root.GetProperty("runtime").GetProperty("credentialsConfigured").GetBoolean(), "Server info must not claim missing credentials are configured.");
     Assert(!info.Contains("secret", StringComparison.OrdinalIgnoreCase), "Server info must not contain credential values.");
     Assert(info.Contains("clockodo_get_entries_by_timeframe", StringComparison.Ordinal), "Server info should list convenience tools.");
+    Assert(info.Contains("clockodo_start_clock", StringComparison.Ordinal), "Server info should list business tools.");
 
     return Task.CompletedTask;
 }
@@ -163,6 +165,117 @@ static async Task ConvenienceToolsBuildExpectedRequests()
 
     await AssertThrowsAsync<McpException>(() =>
         ClockodoTools.GetEntriesByTimeframe(CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))), timeframe: "custom"));
+}
+
+static async Task BusinessToolsBuildExpectedRequests()
+{
+    var customersHandler = new CapturingHandler(JsonResponse("""{"data":[]}"""));
+    await ClockodoTools.ListCustomers(CreateClient(customersHandler), search: "Acme", itemsPerPage: 50);
+
+    var customersQuery = Uri.UnescapeDataString(customersHandler.Request?.RequestUri?.Query ?? "");
+    AssertEqual("/api/v3/customers", customersHandler.Request?.RequestUri?.AbsolutePath, "Unexpected customers path.");
+    Assert(customersQuery.Contains("filter[active]=true", StringComparison.Ordinal), "Expected active customer filter.");
+    Assert(customersQuery.Contains("filter[fulltext]=Acme", StringComparison.Ordinal), "Expected customer fulltext filter.");
+    Assert(customersQuery.Contains("items_per_page=50", StringComparison.Ordinal), "Expected customer page size.");
+
+    var projectsHandler = new CapturingHandler(JsonResponse("""{"data":[]}"""));
+    await ClockodoTools.ListProjects(CreateClient(projectsHandler), search: "Relaunch", customersId: 17);
+
+    var projectsQuery = Uri.UnescapeDataString(projectsHandler.Request?.RequestUri?.Query ?? "");
+    AssertEqual("/api/v4/projects", projectsHandler.Request?.RequestUri?.AbsolutePath, "Unexpected projects path.");
+    Assert(projectsQuery.Contains("filter[active]=true", StringComparison.Ordinal), "Expected active project filter.");
+    Assert(projectsQuery.Contains("filter[completed]=false", StringComparison.Ordinal), "Expected incomplete project filter.");
+    Assert(projectsQuery.Contains("filter[customers_id]=17", StringComparison.Ordinal), "Expected project customer filter.");
+
+    var servicesHandler = new CapturingHandler(JsonResponse("""{"data":[]}"""));
+    await ClockodoTools.ListServices(CreateClient(servicesHandler), search: "Consulting");
+
+    var servicesQuery = Uri.UnescapeDataString(servicesHandler.Request?.RequestUri?.Query ?? "");
+    AssertEqual("/api/v4/services", servicesHandler.Request?.RequestUri?.AbsolutePath, "Unexpected services path.");
+    Assert(servicesQuery.Contains("filter[active]=true", StringComparison.Ordinal), "Expected active service filter.");
+    Assert(servicesQuery.Contains("filter[fulltext]=Consulting", StringComparison.Ordinal), "Expected service fulltext filter.");
+
+    var clockHandler = new CapturingHandler(JsonResponse("""{"running":{"id":99}}"""));
+    await ClockodoTools.GetCurrentClock(CreateClient(clockHandler), usersId: 7);
+
+    var clockQuery = Uri.UnescapeDataString(clockHandler.Request?.RequestUri?.Query ?? "");
+    AssertEqual("/api/v2/clock", clockHandler.Request?.RequestUri?.AbsolutePath, "Unexpected current clock path.");
+    Assert(clockQuery.Contains("users_id=7", StringComparison.Ordinal), "Expected current clock user query.");
+
+    var startClockHandler = new CapturingHandler(JsonResponse("""{"running":{"id":99}}"""));
+    await ClockodoTools.StartClock(
+        CreateClient(startClockHandler),
+        customersId: 10,
+        servicesId: 20,
+        projectsId: 30,
+        text: "Planning",
+        billable: 1,
+        timeSince: "2026-06-25T08:00:00Z");
+
+    AssertEqual(HttpMethod.Post, startClockHandler.Request?.Method, "Unexpected start clock method.");
+    AssertEqual("/api/v2/clock", startClockHandler.Request?.RequestUri?.AbsolutePath, "Unexpected start clock path.");
+    Assert(startClockHandler.Body?.Contains("\"customers_id\":10", StringComparison.Ordinal) == true, "Expected start clock customer id.");
+    Assert(startClockHandler.Body?.Contains("\"services_id\":20", StringComparison.Ordinal) == true, "Expected start clock service id.");
+    Assert(startClockHandler.Body?.Contains("\"projects_id\":30", StringComparison.Ordinal) == true, "Expected start clock project id.");
+    Assert(startClockHandler.Body?.Contains("\"time_since\":\"2026-06-25T08:00:00Z\"", StringComparison.Ordinal) == true, "Expected start clock time_since.");
+
+    var stopClockHandler = new QueueHandler(
+        JsonResponse("""{"running":{"id":99}}"""),
+        JsonResponse("""{"stopped":{"id":99}}"""));
+
+    await ClockodoTools.StopClock(
+        CreateClient(stopClockHandler),
+        timeUntil: "2026-06-25T09:00:00Z",
+        usersId: 7);
+
+    AssertEqual("/api/v2/clock", stopClockHandler.Requests[0].RequestUri?.AbsolutePath, "Stop clock should resolve current clock first.");
+    AssertEqual(HttpMethod.Delete, stopClockHandler.Requests[1].Method, "Unexpected stop clock method.");
+    AssertEqual("/api/v2/clock/99", stopClockHandler.Requests[1].RequestUri?.AbsolutePath, "Unexpected stop clock path.");
+
+    var stopClockQuery = Uri.UnescapeDataString(stopClockHandler.Requests[1].RequestUri?.Query ?? "");
+    Assert(stopClockQuery.Contains("time_until=2026-06-25T09:00:00Z", StringComparison.Ordinal), "Expected stop clock time_until query.");
+    Assert(stopClockQuery.Contains("users_id=7", StringComparison.Ordinal), "Expected stop clock users_id query.");
+
+    var updateClockHandler = new CapturingHandler(JsonResponse("""{"updated":{"id":99}}"""));
+    await ClockodoTools.UpdateClock(CreateClient(updateClockHandler), clockId: 99, duration: 75);
+
+    AssertEqual(HttpMethod.Put, updateClockHandler.Request?.Method, "Unexpected update clock method.");
+    AssertEqual("/api/v2/clock/99", updateClockHandler.Request?.RequestUri?.AbsolutePath, "Unexpected update clock path.");
+    Assert(updateClockHandler.Body?.Contains("\"duration\":75", StringComparison.Ordinal) == true, "Expected update clock duration.");
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.UpdateClock(CreateClient(new CapturingHandler(JsonResponse("""{"updated":{"id":99}}"""))), clockId: 99));
+
+    var entryHandler = new CapturingHandler(JsonResponse("""{"entry":{"id":123}}"""));
+    await ClockodoTools.CreateTimeEntry(
+        CreateClient(entryHandler),
+        customersId: 10,
+        billable: 1,
+        duration: 60,
+        servicesId: 20,
+        text: "Follow-up");
+
+    AssertEqual(HttpMethod.Post, entryHandler.Request?.Method, "Unexpected create entry method.");
+    AssertEqual("/api/v2/entries", entryHandler.Request?.RequestUri?.AbsolutePath, "Unexpected create entry path.");
+    Assert(entryHandler.Body?.Contains("\"customers_id\":10", StringComparison.Ordinal) == true, "Expected create entry customer id.");
+    Assert(entryHandler.Body?.Contains("\"billable\":1", StringComparison.Ordinal) == true, "Expected create entry billable flag.");
+    Assert(entryHandler.Body?.Contains("\"duration\":60", StringComparison.Ordinal) == true, "Expected create entry duration.");
+
+    var updateEntryHandler = new CapturingHandler(JsonResponse("""{"entry":{"id":123}}"""));
+    await ClockodoTools.UpdateTimeEntry(CreateClient(updateEntryHandler), entryId: 123, text: "Updated", duration: 90);
+
+    AssertEqual(HttpMethod.Put, updateEntryHandler.Request?.Method, "Unexpected update entry method.");
+    AssertEqual("/api/v2/entries/123", updateEntryHandler.Request?.RequestUri?.AbsolutePath, "Unexpected update entry path.");
+    Assert(updateEntryHandler.Body?.Contains("\"text\":\"Updated\"", StringComparison.Ordinal) == true, "Expected update entry text.");
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.UpdateTimeEntry(CreateClient(new CapturingHandler(JsonResponse("""{"entry":{"id":123}}"""))), entryId: 123));
+
+    var deleteEntryHandler = new CapturingHandler(JsonResponse("""{"success":true}"""));
+    await ClockodoTools.DeleteTimeEntry(CreateClient(deleteEntryHandler), entryId: 123);
+
+    AssertEqual(HttpMethod.Delete, deleteEntryHandler.Request?.Method, "Unexpected delete entry method.");
+    AssertEqual("/api/v2/entries/123", deleteEntryHandler.Request?.RequestUri?.AbsolutePath, "Unexpected delete entry path.");
 }
 
 static Task OperationLookupRejectsDeprecatedIds()
@@ -292,6 +405,17 @@ static async Task StdioServerExposesAndInvokesTools()
     Assert(toolNames.Contains("clockodo_me"), "Missing clockodo_me tool.");
     Assert(toolNames.Contains("clockodo_get_my_absences"), "Missing clockodo_get_my_absences tool.");
     Assert(toolNames.Contains("clockodo_get_entries_by_timeframe"), "Missing clockodo_get_entries_by_timeframe tool.");
+    Assert(toolNames.Contains("clockodo_list_customers"), "Missing clockodo_list_customers tool.");
+    Assert(toolNames.Contains("clockodo_list_projects"), "Missing clockodo_list_projects tool.");
+    Assert(toolNames.Contains("clockodo_list_services"), "Missing clockodo_list_services tool.");
+    Assert(toolNames.Contains("clockodo_get_current_clock"), "Missing clockodo_get_current_clock tool.");
+    Assert(toolNames.Contains("clockodo_start_clock"), "Missing clockodo_start_clock tool.");
+    Assert(toolNames.Contains("clockodo_stop_clock"), "Missing clockodo_stop_clock tool.");
+    Assert(toolNames.Contains("clockodo_update_clock"), "Missing clockodo_update_clock tool.");
+    Assert(toolNames.Contains("clockodo_get_time_entry"), "Missing clockodo_get_time_entry tool.");
+    Assert(toolNames.Contains("clockodo_create_time_entry"), "Missing clockodo_create_time_entry tool.");
+    Assert(toolNames.Contains("clockodo_update_time_entry"), "Missing clockodo_update_time_entry tool.");
+    Assert(toolNames.Contains("clockodo_delete_time_entry"), "Missing clockodo_delete_time_entry tool.");
     Assert(toolNames.Contains("clockodo_list_operations"), "Missing clockodo_list_operations tool.");
     Assert(toolNames.Contains("clockodo_get_operation"), "Missing clockodo_get_operation tool.");
     Assert(toolNames.Contains("clockodo_read"), "Missing clockodo_read tool.");

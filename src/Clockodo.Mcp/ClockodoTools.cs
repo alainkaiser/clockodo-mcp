@@ -67,6 +67,20 @@ public sealed partial class ClockodoTools
                 "clockodo_me",
                 "clockodo_get_my_absences",
                 "clockodo_get_entries_by_timeframe"
+            },
+            businessTools = new[]
+            {
+                "clockodo_list_customers",
+                "clockodo_list_projects",
+                "clockodo_list_services",
+                "clockodo_get_current_clock",
+                "clockodo_start_clock",
+                "clockodo_stop_clock",
+                "clockodo_update_clock",
+                "clockodo_get_time_entry",
+                "clockodo_create_time_entry",
+                "clockodo_update_time_entry",
+                "clockodo_delete_time_entry"
             }
         }, JsonOptions);
     }

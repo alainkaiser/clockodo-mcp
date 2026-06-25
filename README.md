@@ -11,6 +11,17 @@ The bundled operation catalog is generated from `https://docs.clockodo.com/opena
 - `clockodo_me` - get the current authenticated Clockodo user.
 - `clockodo_get_my_absences` - read absences for the authenticated user.
 - `clockodo_get_entries_by_timeframe` - read entries for common relative timeframes or a custom date range.
+- `clockodo_list_customers` - find active customers for time tracking.
+- `clockodo_list_projects` - find active, incomplete projects for time tracking.
+- `clockodo_list_services` - find active services/activities for time tracking.
+- `clockodo_get_current_clock` - inspect the currently running timer.
+- `clockodo_start_clock` - start a running Clockodo timer.
+- `clockodo_stop_clock` - stop a running Clockodo timer.
+- `clockodo_update_clock` - adjust a running timer's start time or duration.
+- `clockodo_get_time_entry` - inspect one time entry.
+- `clockodo_create_time_entry` - create a completed time entry.
+- `clockodo_update_time_entry` - update a completed time entry.
+- `clockodo_delete_time_entry` - delete a time entry after explicit confirmation.
 - `clockodo_list_operations` - search current non-deprecated operations.
 - `clockodo_get_operation` - inspect one operation, including query/path parameters and top-level JSON body fields.
 - `clockodo_read` - call current non-deprecated `GET` operations.
@@ -26,7 +37,7 @@ This project is intentionally different:
 - full generated wrapper over the current, non-deprecated OpenAPI operations instead of only the selected native MCP tools;
 - explicit `clockodo_read` and `clockodo_write` split plus optional `CLOCKODO_READ_ONLY=true`;
 - `clockodo_get_operation` and `clockodo_server_info` for agent-side discovery before touching data;
-- small read-only convenience tools for current user, own absences, and timeframe-based entry reads.
+- business-first time-tracking tools for customers/projects/services lookup, running clocks, and completed time entries.
 
 ## Install
 
@@ -84,6 +95,53 @@ Call `clockodo_server_info` without arguments to inspect server coverage and run
 ```json
 {}
 ```
+
+### Business Time Tracking
+
+Typical "start working now" flow:
+
+```json
+{
+  "search": "Acme"
+}
+```
+
+Call `clockodo_list_customers`, `clockodo_list_projects`, and `clockodo_list_services` to find ids, then start the timer:
+
+```json
+{
+  "customersId": 123,
+  "projectsId": 456,
+  "servicesId": 789,
+  "text": "Planning workshop",
+  "billable": 1
+}
+```
+
+Call `clockodo_stop_clock` without `clockId` to stop the current running timer:
+
+```json
+{
+  "timeUntil": "2026-06-25T17:00:00Z"
+}
+```
+
+Log completed work without using the running timer:
+
+```json
+{
+  "customersId": 123,
+  "projectsId": 456,
+  "servicesId": 789,
+  "billable": 1,
+  "duration": 90,
+  "text": "Follow-up and documentation"
+}
+```
+
+Use `billable: 1` for billable and `billable: 0` for not billable.
+
+### OpenAPI Wrapper
 
 Find an operation:
 
