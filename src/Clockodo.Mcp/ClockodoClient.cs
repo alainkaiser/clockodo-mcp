@@ -171,16 +171,8 @@ public sealed class ClockodoClient(HttpClient httpClient, ClockodoOptions option
             return decimalValue.ToString(CultureInfo.InvariantCulture);
         }
 
-        if (value.TryGetValue<long>(out var longValue))
-        {
-            return longValue.ToString(CultureInfo.InvariantCulture);
-        }
-
-        if (value.TryGetValue<int>(out var intValue))
-        {
-            return intValue.ToString(CultureInfo.InvariantCulture);
-        }
-
+        // Numbers outside decimal range (very large magnitudes) fall back to double
+        // so query values stay culture-invariant instead of relying on JSON formatting.
         if (value.TryGetValue<double>(out var doubleValue))
         {
             return doubleValue.ToString(CultureInfo.InvariantCulture);

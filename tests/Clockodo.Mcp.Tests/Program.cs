@@ -23,6 +23,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("read-only mode blocks writes", ReadOnlyModeBlocksWrites),
     ("read-only mode blocks business write tools", ReadOnlyModeBlocksBusinessWriteTools),
     ("transport failures surface as MCP errors", TransportFailuresSurfaceAsMcpErrors),
+    ("host cancellation propagates", HostCancellationPropagates),
     ("write rejects missing required bodies and empty path params", WriteValidationRejectsInvalidInput),
     ("stdio MCP server exposes and invokes expected tools", StdioServerExposesAndInvokesTools)
 };
@@ -292,21 +293,35 @@ static Task OperationLookupRejectsDeprecatedIds()
 
 static Task BaseUrlValidationRejectsUnsafeHosts()
 {
-    AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
-    {
-        ["CLOCKODO_BASE_URL"] = "https://evil.example/api/"
-    }));
+    string[] rejected =
+    [
+        "https://evil.example/api/",
+        "http://my.clockodo.com/api/",
+        "https://my.clockodo.com.evil.com/api/",
+        "https://clockodo.com.evil.com/api/",
+        "https://evilclockodo.com/api/",
+        "https://my.clockodo.com@evil.com/api/"
+    ];
 
-    AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
+    foreach (var url in rejected)
     {
-        ["CLOCKODO_BASE_URL"] = "http://my.clockodo.com/api/"
-    }));
+        AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
+        {
+            ["CLOCKODO_BASE_URL"] = url
+        }));
+    }
 
     var local = LoadOptions(new Dictionary<string, string?>
     {
         ["CLOCKODO_BASE_URL"] = "http://127.0.0.1:8080/api/"
     });
     AssertEqual("127.0.0.1", local.BaseUrl.Host, "Local test hosts should remain allowed.");
+
+    var trailingDot = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://my.clockodo.com./api/"
+    });
+    Assert(trailingDot.BaseUrl.Host.StartsWith("my.clockodo.com", StringComparison.Ordinal), "Fully-qualified trailing dot should be accepted.");
 
     var production = LoadOptions(new Dictionary<string, string?>
     {
@@ -483,20 +498,38 @@ static async Task TransportFailuresSurfaceAsMcpErrors()
 
     await AssertThrowsAsync<McpException>(() =>
         ClockodoTools.Read(client, operationId: "getUsersMeV4"));
+
+    // An HttpClient-style timeout (token not cancelled) becomes a tool error.
+    var timeoutClient = CreateClient(new ThrowingHandler(new TaskCanceledException("Timed out.")));
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Read(timeoutClient, operationId: "getUsersMeV4"));
+}
+
+static async Task HostCancellationPropagates()
+{
+    var client = CreateClient(new ThrowingHandler(new TaskCanceledException("Timed out.")));
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+
+    // Genuine host cancellation must propagate, not be rewritten as a tool error.
+    await AssertThrowsAsync<OperationCanceledException>(() =>
+        ClockodoTools.Read(client, operationId: "getUsersMeV4", cancellationToken: cts.Token));
 }
 
 static async Task WriteValidationRejectsInvalidInput()
 {
     var client = CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)));
 
-    await AssertThrowsAsync<McpException>(() =>
+    var missingBody = await CaptureAsync<McpException>(() =>
         ClockodoTools.Write(client, operationId: "createServiceV4"));
+    Assert(missingBody.Message.Contains("requires a JSON request body", StringComparison.Ordinal), "Expected required-body message.");
 
-    await AssertThrowsAsync<McpException>(() =>
+    var emptyPath = await CaptureAsync<McpException>(() =>
         ClockodoTools.Read(
             client,
             operationId: "getServiceByIdV4",
             pathParametersJson: """{"id":""}"""));
+    Assert(emptyPath.Message.Contains("must not be empty", StringComparison.Ordinal), "Expected empty path-parameter message.");
 }
 
 static async Task StdioServerExposesAndInvokesTools()
@@ -671,13 +704,19 @@ static void AssertThrows<TException>(Action action)
 static async Task AssertThrowsAsync<TException>(Func<Task> action)
     where TException : Exception
 {
+    await CaptureAsync<TException>(action);
+}
+
+static async Task<TException> CaptureAsync<TException>(Func<Task> action)
+    where TException : Exception
+{
     try
     {
         await action();
     }
-    catch (TException)
+    catch (TException exception)
     {
-        return;
+        return exception;
     }
 
     throw new InvalidOperationException($"Expected {typeof(TException).Name}.");

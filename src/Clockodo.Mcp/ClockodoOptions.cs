@@ -71,14 +71,25 @@ public sealed record ClockodoOptions(
     private static bool AllowAnyBaseUrl() =>
         string.Equals(Environment.GetEnvironmentVariable("CLOCKODO_BASE_URL_ALLOW_ANY"), "true", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsLocalTestHost(Uri baseUrl) =>
-        string.Equals(baseUrl.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(baseUrl.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-        baseUrl.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
+    private static bool IsLocalTestHost(Uri baseUrl)
+    {
+        var host = NormalizeHost(baseUrl.Host);
+        return host is "localhost" or "127.0.0.1" or "::1" ||
+            host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.StartsWith("127.", StringComparison.Ordinal);
+    }
 
-    private static bool IsClockodoHost(string host) =>
-        string.Equals(host, "clockodo.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".clockodo.com", StringComparison.OrdinalIgnoreCase);
+    private static bool IsClockodoHost(string host)
+    {
+        var normalized = NormalizeHost(host);
+        return normalized.Equals("clockodo.com", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(".clockodo.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Treat a fully-qualified trailing dot (my.clockodo.com.) and bracketed IPv6
+    // literals ([::1]) the same as their canonical forms.
+    private static string NormalizeHost(string host) =>
+        host.Trim('[', ']').TrimEnd('.');
 
     private static string? BlankToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 

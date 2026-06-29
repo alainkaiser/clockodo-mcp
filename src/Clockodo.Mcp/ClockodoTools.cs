@@ -30,7 +30,7 @@ public sealed partial class ClockodoTools
                 total = all.Count,
                 active = active.Count,
                 deprecatedHidden = all.Count(operation => operation.Deprecated),
-                blockedHidden = ClockodoOperationCatalog.BlockedOperations.Count,
+                blockedHidden = all.Count(ClockodoOperationCatalog.IsBlocked),
                 byMethod = active
                     .GroupBy(operation => operation.Method)
                     .OrderBy(group => group.Key)
@@ -206,6 +206,10 @@ public sealed partial class ClockodoTools
 
             return await client.SendAsync(operation, concretePath, queryJson, bodyJson, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidOperationException or JsonException or HttpRequestException or TaskCanceledException)
         {
             throw new McpException(DescribeRequestFailure(exception), exception);
@@ -255,11 +259,6 @@ public sealed partial class ClockodoTools
         if (operation is not null && ClockodoOperationCatalog.IsBlocked(operation))
         {
             return $"Blocked Clockodo operationId: {operationId}. This operation is not exposed through the MCP server.";
-        }
-
-        if (operation is not null && operation.Deprecated)
-        {
-            return $"Unknown or deprecated Clockodo operationId: {operationId}";
         }
 
         return $"Unknown or deprecated Clockodo operationId: {operationId}";

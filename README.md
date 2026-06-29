@@ -71,12 +71,12 @@ This server exposes the full non-deprecated Clockodo OpenAPI surface through `cl
 Safety controls:
 
 - deprecated OpenAPI operations are hidden and rejected;
-- high-risk operations such as public registration (`createRegister`) are blocklisted;
+- the public registration endpoint (`createRegister`) is blocklisted because it provisions new Clockodo accounts and is unrelated to an existing tenant's credentials;
 - `clockodo_read` and `clockodo_write` are split so agents can be granted read-only access;
 - `CLOCKODO_READ_ONLY=true` blocks all non-GET calls at runtime;
-- `CLOCKODO_BASE_URL` must point to a Clockodo HTTPS host unless you explicitly set `CLOCKODO_BASE_URL_ALLOW_ANY=true` for local mock servers.
+- `CLOCKODO_BASE_URL` must point to a Clockodo HTTPS host (`*.clockodo.com`); loopback hosts are allowed over HTTP for local mock servers, and `CLOCKODO_BASE_URL_ALLOW_ANY=true` lifts the host/HTTPS checks entirely (use only for testing).
 
-Destructive business tools such as `clockodo_delete_time_entry` require explicit user confirmation in agent workflows. Generic `clockodo_write` can still reach other write/delete operations, so prefer read-only mode unless writes are required.
+**The blocklist is intentionally narrow.** Apart from `createRegister`, `clockodo_write` exposes the full non-deprecated write surface, including account-level updates and irreversible deletes (for example `deleteUserByIdV3`, `deleteCustomerByIdV3`, `deleteProjectByIdV4`). The primary guardrail against unwanted writes is `CLOCKODO_READ_ONLY=true`; enable it unless the agent genuinely needs to modify data. Destructive business tools such as `clockodo_delete_time_entry` are marked destructive and should require explicit user confirmation in agent workflows.
 
 ## Agent Config
 
