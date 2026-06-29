@@ -27,7 +27,7 @@ public sealed record ClockodoOptions(
             BlankToNull(apiKey),
             string.IsNullOrWhiteSpace(externalApplication) ? "clockodo-mcp;unknown@example.invalid" : externalApplication,
             string.IsNullOrWhiteSpace(acceptLanguage) ? "en" : acceptLanguage,
-            new Uri(string.IsNullOrWhiteSpace(baseUrl) ? "https://my.clockodo.com/api/" : EnsureTrailingSlash(baseUrl)),
+            ValidateBaseUrl(new Uri(string.IsNullOrWhiteSpace(baseUrl) ? "https://my.clockodo.com/api/" : EnsureTrailingSlash(baseUrl))),
             string.Equals(readOnly, "true", StringComparison.OrdinalIgnoreCase) || readOnly == "1");
     }
 
@@ -39,6 +39,46 @@ public sealed record ClockodoOptions(
                 "Clockodo credentials are missing. Set CLOCKODO_API_USER and CLOCKODO_API_KEY in the MCP server environment.");
         }
     }
+
+    private static Uri ValidateBaseUrl(Uri baseUrl)
+    {
+        if (AllowAnyBaseUrl())
+        {
+            return baseUrl;
+        }
+
+        if (!string.IsNullOrEmpty(baseUrl.UserInfo))
+        {
+            throw new InvalidOperationException("CLOCKODO_BASE_URL must not include userinfo.");
+        }
+
+        if (!IsLocalTestHost(baseUrl) &&
+            !string.Equals(baseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("CLOCKODO_BASE_URL must use HTTPS for non-local hosts.");
+        }
+
+        if (!IsLocalTestHost(baseUrl) && !IsClockodoHost(baseUrl.Host))
+        {
+            throw new InvalidOperationException(
+                "CLOCKODO_BASE_URL must point to a Clockodo API host (*.clockodo.com). " +
+                "Set CLOCKODO_BASE_URL_ALLOW_ANY=true only for local testing.");
+        }
+
+        return baseUrl;
+    }
+
+    private static bool AllowAnyBaseUrl() =>
+        string.Equals(Environment.GetEnvironmentVariable("CLOCKODO_BASE_URL_ALLOW_ANY"), "true", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLocalTestHost(Uri baseUrl) =>
+        string.Equals(baseUrl.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(baseUrl.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+        baseUrl.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsClockodoHost(string host) =>
+        string.Equals(host, "clockodo.com", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".clockodo.com", StringComparison.OrdinalIgnoreCase);
 
     private static string? BlankToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 

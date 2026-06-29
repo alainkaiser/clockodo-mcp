@@ -15,11 +15,14 @@ var tests = new (string Name, Func<Task> Run)[]
     ("business tools build expected requests", BusinessToolsBuildExpectedRequests),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
     ("blocked operations are hidden and rejected", BlockedOperationsAreHiddenAndRejected),
+    ("base url validation rejects unsafe hosts", BaseUrlValidationRejectsUnsafeHosts),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
     ("request sends JSON body", RequestSendsJsonBody),
     ("read and write tools enforce method boundaries", ReadAndWriteToolsEnforceBoundaries),
     ("read-only mode blocks writes", ReadOnlyModeBlocksWrites),
+    ("read-only mode blocks business write tools", ReadOnlyModeBlocksBusinessWriteTools),
+    ("transport failures surface as MCP errors", TransportFailuresSurfaceAsMcpErrors),
     ("stdio MCP server exposes and invokes expected tools", StdioServerExposesAndInvokesTools)
 };
 
@@ -286,6 +289,71 @@ static Task OperationLookupRejectsDeprecatedIds()
     return Task.CompletedTask;
 }
 
+static Task BaseUrlValidationRejectsUnsafeHosts()
+{
+    AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://evil.example/api/"
+    }));
+
+    AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "http://my.clockodo.com/api/"
+    }));
+
+    var local = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "http://127.0.0.1:8080/api/"
+    });
+    AssertEqual("127.0.0.1", local.BaseUrl.Host, "Local test hosts should remain allowed.");
+
+    var production = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://my.clockodo.com/api/"
+    });
+    AssertEqual("my.clockodo.com", production.BaseUrl.Host, "Clockodo production host should remain allowed.");
+
+    var overrideAllowed = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://evil.example/api/",
+        ["CLOCKODO_BASE_URL_ALLOW_ANY"] = "true"
+    });
+    AssertEqual("evil.example", overrideAllowed.BaseUrl.Host, "Explicit override should allow custom hosts.");
+
+    return Task.CompletedTask;
+}
+
+static ClockodoOptions LoadOptions(Dictionary<string, string?> values)
+{
+    var previous = new Dictionary<string, string?>();
+    foreach (var key in values.Keys.Concat(["CLOCKODO_BASE_URL_ALLOW_ANY"]))
+    {
+        previous[key] = Environment.GetEnvironmentVariable(key);
+    }
+
+    try
+    {
+        foreach (var (key, value) in values)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+
+        if (!values.ContainsKey("CLOCKODO_BASE_URL_ALLOW_ANY"))
+        {
+            Environment.SetEnvironmentVariable("CLOCKODO_BASE_URL_ALLOW_ANY", null);
+        }
+
+        return ClockodoOptions.FromEnvironment();
+    }
+    finally
+    {
+        foreach (var (key, value) in previous)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+}
+
 static async Task BlockedOperationsAreHiddenAndRejected()
 {
     Assert(ClockodoOperationCatalog.IsBlocked(ClockodoOperationCatalog.FindByOperationId("createRegister")!), "createRegister should be blocklisted.");
@@ -390,6 +458,30 @@ static async Task ReadOnlyModeBlocksWrites()
 
     await AssertThrowsAsync<McpException>(() =>
         ClockodoTools.Write(client, operationId: "createServiceV4", bodyJson: """{"name":"Blocked"}"""));
+}
+
+static async Task ReadOnlyModeBlocksBusinessWriteTools()
+{
+    var options = new ClockodoOptions(
+        "user@example.com",
+        "secret",
+        "clockodo-mcp;user@example.com",
+        "en",
+        new Uri("https://my.clockodo.com/api/"),
+        ReadOnly: true);
+
+    var client = new ClockodoClient(new HttpClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))), options);
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.StartClock(client, customersId: 1, servicesId: 2));
+}
+
+static async Task TransportFailuresSurfaceAsMcpErrors()
+{
+    var client = CreateClient(new ThrowingHandler(new HttpRequestException("Network unreachable.")));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Read(client, operationId: "getUsersMeV4"));
 }
 
 static async Task StdioServerExposesAndInvokesTools()
@@ -611,6 +703,12 @@ internal sealed class QueueHandler(params HttpResponseMessage[] responses) : Htt
 
         return Task.FromResult(responses.Dequeue());
     }
+}
+
+internal sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromException<HttpResponseMessage>(exception);
 }
 
 internal sealed class CapturedHttpRequest

@@ -199,9 +199,9 @@ public sealed partial class ClockodoTools
 
             return await client.SendAsync(operation, concretePath, queryJson, bodyJson, cancellationToken);
         }
-        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidOperationException or JsonException)
+        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidOperationException or JsonException or HttpRequestException or TaskCanceledException)
         {
-            throw new McpException(exception.Message, exception);
+            throw new McpException(DescribeRequestFailure(exception), exception);
         }
     }
 
@@ -257,6 +257,14 @@ public sealed partial class ClockodoTools
 
         return $"Unknown or deprecated Clockodo operationId: {operationId}";
     }
+
+    private static string DescribeRequestFailure(Exception exception) =>
+        exception switch
+        {
+            TaskCanceledException => "Clockodo request timed out or was canceled.",
+            HttpRequestException httpRequestException when httpRequestException.Message.Length > 0 => httpRequestException.Message,
+            _ => exception.Message
+        };
 
     private static (ClockodoOperation Operation, string ConcretePath) ResolveOperation(
         string? operationId,
