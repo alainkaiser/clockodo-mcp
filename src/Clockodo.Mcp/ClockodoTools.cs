@@ -29,7 +29,8 @@ public sealed partial class ClockodoTools
             {
                 total = all.Count,
                 active = active.Count,
-                deprecatedHidden = all.Count - active.Count,
+                deprecatedHidden = all.Count(operation => operation.Deprecated),
+                blockedHidden = ClockodoOperationCatalog.BlockedOperations.Count,
                 byMethod = active
                     .GroupBy(operation => operation.Method)
                     .OrderBy(group => group.Key)
@@ -58,6 +59,7 @@ public sealed partial class ClockodoTools
             safety = new[]
             {
                 "Deprecated OpenAPI operations are hidden and rejected.",
+                "High-risk operations such as public registration are blocklisted and rejected.",
                 "GET operations use clockodo_read; POST, PUT, and DELETE operations use clockodo_write.",
                 "Set CLOCKODO_READ_ONLY=true to block all write operations at runtime."
             },
@@ -122,9 +124,9 @@ public sealed partial class ClockodoTools
     {
         var operation = ClockodoOperationCatalog.FindByOperationId(operationId);
 
-        if (operation is null || operation.Deprecated)
+        if (operation is null || !ClockodoOperationCatalog.IsCallable(operation))
         {
-            throw new McpException($"Unknown or deprecated Clockodo operationId: {operationId}");
+            throw new McpException(DescribeUnavailableOperation(operationId, operation));
         }
 
         return JsonSerializer.Serialize(ToDetailedDto(operation), JsonOptions);
@@ -241,6 +243,21 @@ public sealed partial class ClockodoTools
     private static bool Contains(string? value, string search) =>
         value?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
 
+    private static string DescribeUnavailableOperation(string operationId, ClockodoOperation? operation)
+    {
+        if (operation is not null && ClockodoOperationCatalog.IsBlocked(operation))
+        {
+            return $"Blocked Clockodo operationId: {operationId}. This operation is not exposed through the MCP server.";
+        }
+
+        if (operation is not null && operation.Deprecated)
+        {
+            return $"Unknown or deprecated Clockodo operationId: {operationId}";
+        }
+
+        return $"Unknown or deprecated Clockodo operationId: {operationId}";
+    }
+
     private static (ClockodoOperation Operation, string ConcretePath) ResolveOperation(
         string? operationId,
         string? method,
@@ -254,9 +271,9 @@ public sealed partial class ClockodoTools
         {
             operation = ClockodoOperationCatalog.FindByOperationId(operationId);
 
-            if (operation is null || operation.Deprecated)
+            if (operation is null || !ClockodoOperationCatalog.IsCallable(operation))
             {
-                throw new McpException($"Unknown or deprecated Clockodo operationId: {operationId}");
+                throw new McpException(DescribeUnavailableOperation(operationId, operation));
             }
 
             method = operation.Method;

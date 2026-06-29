@@ -14,6 +14,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("convenience tools build expected requests", ConvenienceToolsBuildExpectedRequests),
     ("business tools build expected requests", BusinessToolsBuildExpectedRequests),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
+    ("blocked operations are hidden and rejected", BlockedOperationsAreHiddenAndRejected),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
     ("request sends JSON body", RequestSendsJsonBody),
@@ -39,10 +40,10 @@ static Task CatalogFiltersDeprecatedOperations()
     Assert(ClockodoOperationCatalog.All.Count > 100, "Expected a rich Clockodo operation catalog.");
     Assert(ClockodoOperationCatalog.All.Count > ClockodoOperationCatalog.Active.Count, "Expected deprecated operations in the source catalog.");
     AssertEqual(
-        ClockodoOperationCatalog.All.Count(operation => !operation.Deprecated),
+        ClockodoOperationCatalog.All.Count(operation => ClockodoOperationCatalog.IsCallable(operation)),
         ClockodoOperationCatalog.Active.Count,
-        "Active operation count must equal all non-deprecated operations.");
-    Assert(ClockodoOperationCatalog.Active.All(operation => !operation.Deprecated), "Active catalog must exclude deprecated operations.");
+        "Active operation count must equal all callable operations.");
+    Assert(ClockodoOperationCatalog.Active.All(operation => ClockodoOperationCatalog.IsCallable(operation)), "Active catalog must exclude deprecated and blocked operations.");
 
     var services = ClockodoTools.ListOperations(search: "services", tag: "Service");
     Assert(services.Contains("getServicesV4", StringComparison.Ordinal), "Service list should include getServicesV4.");
@@ -78,6 +79,7 @@ static Task ServerInfoReportsCatalogAndRuntimeState()
     AssertEqual("https://mcp.clockodo.com/mcp", root.GetProperty("nativeClockodoMcp").GetProperty("endpoint").GetString(), "Unexpected native MCP endpoint.");
     Assert(root.GetProperty("operations").GetProperty("active").GetInt32() > 100, "Expected active operation count.");
     Assert(root.GetProperty("operations").GetProperty("deprecatedHidden").GetInt32() > 0, "Expected hidden deprecated operations.");
+    Assert(root.GetProperty("operations").GetProperty("blockedHidden").GetInt32() > 0, "Expected hidden blocked operations.");
     Assert(root.GetProperty("runtime").GetProperty("readOnly").GetBoolean(), "Expected read-only runtime state.");
     Assert(!root.GetProperty("runtime").GetProperty("credentialsConfigured").GetBoolean(), "Server info must not claim missing credentials are configured.");
     Assert(!info.Contains("secret", StringComparison.OrdinalIgnoreCase), "Server info must not contain credential values.");
@@ -282,6 +284,23 @@ static Task OperationLookupRejectsDeprecatedIds()
 {
     AssertThrows<McpException>(() => ClockodoTools.GetOperation("getAggregatesUsersMeV2"));
     return Task.CompletedTask;
+}
+
+static async Task BlockedOperationsAreHiddenAndRejected()
+{
+    Assert(ClockodoOperationCatalog.IsBlocked(ClockodoOperationCatalog.FindByOperationId("createRegister")!), "createRegister should be blocklisted.");
+    Assert(!ClockodoOperationCatalog.Active.Any(operation => operation.OperationId == "createRegister"), "createRegister must not appear in active catalog.");
+
+    var operations = ClockodoTools.ListOperations(search: "createRegister");
+    Assert(!operations.Contains("createRegister", StringComparison.Ordinal), "Blocked operation must not appear in list results.");
+
+    AssertThrows<McpException>(() => ClockodoTools.GetOperation("createRegister"));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Write(
+            CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))),
+            operationId: "createRegister",
+            bodyJson: """{"companies_name":"Acme","name":"Test","email":"test@example.com"}"""));
 }
 
 static async Task RequestBuildsHeadersAndQuery()
