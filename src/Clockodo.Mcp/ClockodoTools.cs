@@ -107,12 +107,14 @@ public sealed partial class ClockodoTools
             operations = operations.Where(operation => MatchesSearch(operation, search));
         }
 
+        var list = operations.ToList();
+
         return JsonSerializer.Serialize(new
         {
             source = ClockodoOperationCatalog.SourceUrl,
             openApiVersion = ClockodoOperationCatalog.OpenApiVersion,
-            count = operations.Count(),
-            operations = operations.Select(ToSummaryDto)
+            count = list.Count,
+            operations = list.Select(ToSummaryDto)
         }, JsonOptions);
     }
 
@@ -133,7 +135,7 @@ public sealed partial class ClockodoTools
     }
 
     [McpServerTool(Name = "clockodo_read", ReadOnly = true, Destructive = false, OpenWorld = false)]
-    [Description("Calls a current, non-deprecated Clockodo GET operation. Prefer operationId plus pathParametersJson; or pass method GET and a concrete path without the /api prefix.")]
+    [Description("Calls a current, non-deprecated Clockodo GET operation. Prefer operationId plus pathParametersJson; or pass method GET and a concrete path without the /api prefix. Responses include ok, status, reason, and body; when Clockodo rate-limits, retryAfter may be present.")]
     public static Task<string> Read(
         ClockodoClient client,
         [Description("Optional operationId from clockodo_list_operations. When provided, method and path are inferred from the catalog.")]
@@ -152,7 +154,7 @@ public sealed partial class ClockodoTools
     }
 
     [McpServerTool(Name = "clockodo_write", ReadOnly = false, Destructive = true, OpenWorld = false)]
-    [Description("Calls a current, non-deprecated Clockodo POST, PUT, or DELETE operation. Use only when you intend to create, update, delete, start, stop, approve, or otherwise change Clockodo data.")]
+    [Description("Calls a current, non-deprecated Clockodo POST, PUT, or DELETE operation. Use only when you intend to create, update, delete, start, stop, approve, or otherwise change Clockodo data. Responses include ok, status, reason, and body; when Clockodo rate-limits, retryAfter may be present.")]
     public static Task<string> Write(
         ClockodoClient client,
         [Description("Optional operationId from clockodo_list_operations. When provided, method and path are inferred from the catalog.")]
@@ -195,6 +197,11 @@ public sealed partial class ClockodoTools
             if (!requireRead && string.Equals(operation.Method, "GET", StringComparison.OrdinalIgnoreCase))
             {
                 throw new McpException("clockodo_write is for POST, PUT, and DELETE operations. Use clockodo_read for GET operations.");
+            }
+
+            if (!requireRead && operation.RequiresBody && string.IsNullOrWhiteSpace(bodyJson))
+            {
+                throw new McpException($"Operation {operation.OperationId} requires a JSON request body.");
             }
 
             return await client.SendAsync(operation, concretePath, queryJson, bodyJson, cancellationToken);
@@ -365,7 +372,7 @@ public sealed partial class ClockodoTools
             var value = property.Value?.GetValue<object>()?.ToString();
             if (string.IsNullOrWhiteSpace(value))
             {
-                continue;
+                throw new McpException($"Path parameter '{property.Key}' must not be empty.");
             }
 
             path = path.Replace("{" + property.Key + "}", Uri.EscapeDataString(value), StringComparison.Ordinal);

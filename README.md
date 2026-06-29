@@ -62,6 +62,21 @@ CLOCKODO_EXTERNAL_APPLICATION="clockodo-mcp;you@example.com"
 
 - `CLOCKODO_ACCEPT_LANGUAGE`: `en`, `de`, or `fr`; defaults to `en`.
 - `CLOCKODO_READ_ONLY=true`: blocks write operations.
+- `CLOCKODO_BASE_URL_ALLOW_ANY=true`: allows non-Clockodo base URLs for local testing only.
+
+## Safety Model
+
+This server exposes the full non-deprecated Clockodo OpenAPI surface through `clockodo_read` and `clockodo_write`, plus higher-level business tools for day-to-day time tracking.
+
+Safety controls:
+
+- deprecated OpenAPI operations are hidden and rejected;
+- high-risk operations such as public registration (`createRegister`) are blocklisted;
+- `clockodo_read` and `clockodo_write` are split so agents can be granted read-only access;
+- `CLOCKODO_READ_ONLY=true` blocks all non-GET calls at runtime;
+- `CLOCKODO_BASE_URL` must point to a Clockodo HTTPS host unless you explicitly set `CLOCKODO_BASE_URL_ALLOW_ANY=true` for local mock servers.
+
+Destructive business tools such as `clockodo_delete_time_entry` require explicit user confirmation in agent workflows. Generic `clockodo_write` can still reach other write/delete operations, so prefer read-only mode unless writes are required.
 
 ## Agent Config
 

@@ -171,6 +171,21 @@ public sealed class ClockodoClient(HttpClient httpClient, ClockodoOptions option
             return decimalValue.ToString(CultureInfo.InvariantCulture);
         }
 
+        if (value.TryGetValue<long>(out var longValue))
+        {
+            return longValue.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (value.TryGetValue<int>(out var intValue))
+        {
+            return intValue.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (value.TryGetValue<double>(out var doubleValue))
+        {
+            return doubleValue.ToString(CultureInfo.InvariantCulture);
+        }
+
         return value.ToJsonString();
     }
 }

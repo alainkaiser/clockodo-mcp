@@ -2,23 +2,25 @@
 
 Baseline: `main` @ fc5c49b — 10/11 tests pass locally (stdio test needs runtime on PATH).
 
+Post-fix baseline: 16/16 tests pass with `scripts/run-dev-mcp-server`.
+
 ## Implementation queue
 
 | ID | Severity | Title | Status |
 |----|----------|-------|--------|
-| F1 | CRITICAL | Block `createRegister` via operation blocklist | pending |
-| F2 | CRITICAL | Validate `CLOCKODO_BASE_URL` (HTTPS + clockodo.com) | pending |
-| F3 | WARNING | Configure HttpClient timeout | pending |
-| F4 | WARNING | Wrap transport failures as McpException | pending |
-| F5 | WARNING | Read-only errors as McpException at source | pending |
-| F6 | WARNING | Cache `Active` catalog | pending |
-| F7 | WARNING | DST-safe date conversion with McpException | pending |
-| F9 | WARNING | Reject empty path parameter values | pending |
-| F10 | WARNING | Explicit int/long query encoding | pending |
-| F11 | WARNING | Materialize ListOperations once | pending |
-| F12 | NOTE | Validate RequiresBody on write | pending |
-| F13 | NOTE | Document retryAfter in tool descriptions | pending |
-| F16 | NOTE | README safety section | pending |
+| F1 | CRITICAL | Block `createRegister` via operation blocklist | done |
+| F2 | CRITICAL | Validate `CLOCKODO_BASE_URL` (HTTPS + clockodo.com) | done |
+| F3 | WARNING | Configure HttpClient timeout | done |
+| F4 | WARNING | Wrap transport failures as McpException | done |
+| F5 | WARNING | Read-only errors as McpException at source | done |
+| F6 | WARNING | Cache `Active` catalog | done |
+| F7 | WARNING | DST-safe date conversion with McpException | done |
+| F9 | WARNING | Reject empty path parameter values | done |
+| F10 | WARNING | Explicit int/long query encoding | done |
+| F11 | WARNING | Materialize ListOperations once | done |
+| F12 | NOTE | Validate RequiresBody on write | done |
+| F13 | NOTE | Document retryAfter in tool descriptions | done |
+| F16 | NOTE | README safety section | done |
 
 Deferred (scope): F8 (write allowlist/tiers), F15 (connection pooling).
 

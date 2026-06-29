@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ASSEMBLY="$ROOT/src/Clockodo.Mcp/bin/Debug/net10.0/Clockodo.Mcp.dll"
+
+if [[ ! -f "$ASSEMBLY" ]]; then
+  echo "Missing $ASSEMBLY. Run 'dotnet build ClockodoMcp.slnx' first." >&2
+  exit 1
+fi
+
+if command -v dotnet >/dev/null 2>&1; then
+  exec dotnet exec "$ASSEMBLY" "$@"
+fi
+
+if [[ -n "${DOTNET_ROOT:-}" && -x "${DOTNET_ROOT}/dotnet" ]]; then
+  exec "${DOTNET_ROOT}/dotnet" exec "$ASSEMBLY" "$@"
+fi
+
+echo "dotnet is required to run the development MCP server." >&2
+exit 127

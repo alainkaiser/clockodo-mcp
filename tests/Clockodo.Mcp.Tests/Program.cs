@@ -23,6 +23,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("read-only mode blocks writes", ReadOnlyModeBlocksWrites),
     ("read-only mode blocks business write tools", ReadOnlyModeBlocksBusinessWriteTools),
     ("transport failures surface as MCP errors", TransportFailuresSurfaceAsMcpErrors),
+    ("write rejects missing required bodies and empty path params", WriteValidationRejectsInvalidInput),
     ("stdio MCP server exposes and invokes expected tools", StdioServerExposesAndInvokesTools)
 };
 
@@ -484,6 +485,20 @@ static async Task TransportFailuresSurfaceAsMcpErrors()
         ClockodoTools.Read(client, operationId: "getUsersMeV4"));
 }
 
+static async Task WriteValidationRejectsInvalidInput()
+{
+    var client = CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Write(client, operationId: "createServiceV4"));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Read(
+            client,
+            operationId: "getServiceByIdV4",
+            pathParametersJson: """{"id":""}"""));
+}
+
 static async Task StdioServerExposesAndInvokesTools()
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -496,11 +511,12 @@ static async Task StdioServerExposesAndInvokesTools()
     env["CLOCKODO_BASE_URL"] = fakeClockodo.BaseUri.ToString();
 
     var repoRoot = FindRepoRoot();
+    var devServer = Path.Combine(repoRoot, "scripts", "run-dev-mcp-server");
     var transport = new StdioClientTransport(new StdioClientTransportOptions
     {
         Name = "clockodo-mcp-test",
         Command = Environment.GetEnvironmentVariable("CLOCKODO_MCP_COMMAND")
-            ?? Path.Combine(repoRoot, "src", "Clockodo.Mcp", "bin", "Debug", "net10.0", "Clockodo.Mcp"),
+            ?? (File.Exists(devServer) ? devServer : Path.Combine(repoRoot, "src", "Clockodo.Mcp", "bin", "Debug", "net10.0", "Clockodo.Mcp")),
         Arguments = [],
         WorkingDirectory = repoRoot,
         InheritEnvironmentVariables = false,
