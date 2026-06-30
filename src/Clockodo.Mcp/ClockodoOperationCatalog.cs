@@ -2,10 +2,27 @@ namespace Clockodo.Mcp;
 
 public static partial class ClockodoOperationCatalog
 {
+    private static readonly HashSet<string> BlockedOperationIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Public signup endpoint — unrelated to tenant API credentials and irreversible.
+        "createRegister"
+    };
+
     private static readonly Lazy<IReadOnlyDictionary<string, ClockodoOperation>> ByOperationId =
         new(() => All.ToDictionary(operation => operation.OperationId, StringComparer.OrdinalIgnoreCase));
 
-    public static IReadOnlyList<ClockodoOperation> Active => All.Where(operation => !operation.Deprecated).ToArray();
+    private static readonly Lazy<IReadOnlyList<ClockodoOperation>> ActiveOperations =
+        new(() => All.Where(operation => IsCallable(operation)).ToArray());
+
+    public static IReadOnlyList<ClockodoOperation> Active => ActiveOperations.Value;
+
+    public static IReadOnlySet<string> BlockedOperations => BlockedOperationIds;
+
+    public static bool IsBlocked(ClockodoOperation operation) =>
+        BlockedOperationIds.Contains(operation.OperationId);
+
+    public static bool IsCallable(ClockodoOperation operation) =>
+        !operation.Deprecated && !IsBlocked(operation);
 
     public static ClockodoOperation? FindByOperationId(string operationId) =>
         ByOperationId.Value.TryGetValue(operationId, out var operation) ? operation : null;

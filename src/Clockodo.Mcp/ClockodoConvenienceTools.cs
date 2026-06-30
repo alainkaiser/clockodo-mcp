@@ -98,7 +98,7 @@ public sealed partial class ClockodoTools
     }
 
     [McpServerTool(Name = "clockodo_get_entries_by_timeframe", ReadOnly = true, Destructive = false, OpenWorld = false)]
-    [Description("Gets Clockodo time entries for today, yesterday, this_week, last_week, this_month, last_month, or a custom inclusive date range.")]
+    [Description("Gets Clockodo time entries for today, yesterday, this_week, last_week, this_month, last_month, or a custom inclusive date range. Weeks start on Monday in the requested time zone.")]
     public static async Task<string> GetEntriesByTimeframe(
         ClockodoClient client,
         [Description("One of today, yesterday, this_week, last_week, this_month, last_month, or custom.")]
@@ -304,9 +304,16 @@ public sealed partial class ClockodoTools
 
     private static string ToUtcIso(DateOnly date, TimeZoneInfo zone)
     {
-        var local = DateTime.SpecifyKind(date.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
-        var utc = TimeZoneInfo.ConvertTimeToUtc(local, zone);
-        return utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        try
+        {
+            var local = DateTime.SpecifyKind(date.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+            var utc = TimeZoneInfo.ConvertTimeToUtc(local, zone);
+            return utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidTimeZoneException)
+        {
+            throw new McpException($"Could not convert {date:yyyy-MM-dd} in time zone {zone.Id} to UTC.", exception);
+        }
     }
 
     private sealed record DateRange(

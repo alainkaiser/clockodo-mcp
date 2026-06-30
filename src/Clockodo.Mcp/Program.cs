@@ -13,7 +13,13 @@ builder.Logging.AddConsole(options =>
 });
 
 builder.Services.AddSingleton(ClockodoOptions.FromEnvironment());
-builder.Services.AddSingleton<HttpClient>();
+builder.Services.AddSingleton(_ => new HttpClient(new SocketsHttpHandler
+{
+    PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+})
+{
+    Timeout = TimeSpan.FromSeconds(100)
+});
 builder.Services.AddSingleton<ClockodoClient>();
 
 builder.Services

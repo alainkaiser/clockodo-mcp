@@ -27,7 +27,7 @@ public sealed record ClockodoOptions(
             BlankToNull(apiKey),
             string.IsNullOrWhiteSpace(externalApplication) ? "clockodo-mcp;unknown@example.invalid" : externalApplication,
             string.IsNullOrWhiteSpace(acceptLanguage) ? "en" : acceptLanguage,
-            new Uri(string.IsNullOrWhiteSpace(baseUrl) ? "https://my.clockodo.com/api/" : EnsureTrailingSlash(baseUrl)),
+            ValidateBaseUrl(new Uri(string.IsNullOrWhiteSpace(baseUrl) ? "https://my.clockodo.com/api/" : EnsureTrailingSlash(baseUrl))),
             string.Equals(readOnly, "true", StringComparison.OrdinalIgnoreCase) || readOnly == "1");
     }
 
@@ -39,6 +39,57 @@ public sealed record ClockodoOptions(
                 "Clockodo credentials are missing. Set CLOCKODO_API_USER and CLOCKODO_API_KEY in the MCP server environment.");
         }
     }
+
+    private static Uri ValidateBaseUrl(Uri baseUrl)
+    {
+        if (AllowAnyBaseUrl())
+        {
+            return baseUrl;
+        }
+
+        if (!string.IsNullOrEmpty(baseUrl.UserInfo))
+        {
+            throw new InvalidOperationException("CLOCKODO_BASE_URL must not include userinfo.");
+        }
+
+        if (!IsLocalTestHost(baseUrl) &&
+            !string.Equals(baseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("CLOCKODO_BASE_URL must use HTTPS for non-local hosts.");
+        }
+
+        if (!IsLocalTestHost(baseUrl) && !IsClockodoHost(baseUrl.Host))
+        {
+            throw new InvalidOperationException(
+                "CLOCKODO_BASE_URL must point to a Clockodo API host (*.clockodo.com). " +
+                "Set CLOCKODO_BASE_URL_ALLOW_ANY=true only for local testing.");
+        }
+
+        return baseUrl;
+    }
+
+    private static bool AllowAnyBaseUrl() =>
+        string.Equals(Environment.GetEnvironmentVariable("CLOCKODO_BASE_URL_ALLOW_ANY"), "true", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLocalTestHost(Uri baseUrl)
+    {
+        var host = NormalizeHost(baseUrl.Host);
+        return host is "localhost" or "127.0.0.1" or "::1" ||
+            host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.StartsWith("127.", StringComparison.Ordinal);
+    }
+
+    private static bool IsClockodoHost(string host)
+    {
+        var normalized = NormalizeHost(host);
+        return normalized.Equals("clockodo.com", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(".clockodo.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Treat a fully-qualified trailing dot (my.clockodo.com.) and bracketed IPv6
+    // literals ([::1]) the same as their canonical forms.
+    private static string NormalizeHost(string host) =>
+        host.Trim('[', ']').TrimEnd('.');
 
     private static string? BlankToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 

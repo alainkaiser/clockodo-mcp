@@ -14,11 +14,17 @@ var tests = new (string Name, Func<Task> Run)[]
     ("convenience tools build expected requests", ConvenienceToolsBuildExpectedRequests),
     ("business tools build expected requests", BusinessToolsBuildExpectedRequests),
     ("operation lookup rejects deprecated operation ids", OperationLookupRejectsDeprecatedIds),
+    ("blocked operations are hidden and rejected", BlockedOperationsAreHiddenAndRejected),
+    ("base url validation rejects unsafe hosts", BaseUrlValidationRejectsUnsafeHosts),
     ("request builds Clockodo headers and deep query", RequestBuildsHeadersAndQuery),
     ("request applies path parameters", RequestAppliesPathParameters),
     ("request sends JSON body", RequestSendsJsonBody),
     ("read and write tools enforce method boundaries", ReadAndWriteToolsEnforceBoundaries),
     ("read-only mode blocks writes", ReadOnlyModeBlocksWrites),
+    ("read-only mode blocks business write tools", ReadOnlyModeBlocksBusinessWriteTools),
+    ("transport failures surface as MCP errors", TransportFailuresSurfaceAsMcpErrors),
+    ("host cancellation propagates", HostCancellationPropagates),
+    ("write rejects missing required bodies and empty path params", WriteValidationRejectsInvalidInput),
     ("stdio MCP server exposes and invokes expected tools", StdioServerExposesAndInvokesTools)
 };
 
@@ -39,10 +45,10 @@ static Task CatalogFiltersDeprecatedOperations()
     Assert(ClockodoOperationCatalog.All.Count > 100, "Expected a rich Clockodo operation catalog.");
     Assert(ClockodoOperationCatalog.All.Count > ClockodoOperationCatalog.Active.Count, "Expected deprecated operations in the source catalog.");
     AssertEqual(
-        ClockodoOperationCatalog.All.Count(operation => !operation.Deprecated),
+        ClockodoOperationCatalog.All.Count(operation => ClockodoOperationCatalog.IsCallable(operation)),
         ClockodoOperationCatalog.Active.Count,
-        "Active operation count must equal all non-deprecated operations.");
-    Assert(ClockodoOperationCatalog.Active.All(operation => !operation.Deprecated), "Active catalog must exclude deprecated operations.");
+        "Active operation count must equal all callable operations.");
+    Assert(ClockodoOperationCatalog.Active.All(operation => ClockodoOperationCatalog.IsCallable(operation)), "Active catalog must exclude deprecated and blocked operations.");
 
     var services = ClockodoTools.ListOperations(search: "services", tag: "Service");
     Assert(services.Contains("getServicesV4", StringComparison.Ordinal), "Service list should include getServicesV4.");
@@ -78,6 +84,7 @@ static Task ServerInfoReportsCatalogAndRuntimeState()
     AssertEqual("https://mcp.clockodo.com/mcp", root.GetProperty("nativeClockodoMcp").GetProperty("endpoint").GetString(), "Unexpected native MCP endpoint.");
     Assert(root.GetProperty("operations").GetProperty("active").GetInt32() > 100, "Expected active operation count.");
     Assert(root.GetProperty("operations").GetProperty("deprecatedHidden").GetInt32() > 0, "Expected hidden deprecated operations.");
+    Assert(root.GetProperty("operations").GetProperty("blockedHidden").GetInt32() > 0, "Expected hidden blocked operations.");
     Assert(root.GetProperty("runtime").GetProperty("readOnly").GetBoolean(), "Expected read-only runtime state.");
     Assert(!root.GetProperty("runtime").GetProperty("credentialsConfigured").GetBoolean(), "Server info must not claim missing credentials are configured.");
     Assert(!info.Contains("secret", StringComparison.OrdinalIgnoreCase), "Server info must not contain credential values.");
@@ -284,6 +291,102 @@ static Task OperationLookupRejectsDeprecatedIds()
     return Task.CompletedTask;
 }
 
+static Task BaseUrlValidationRejectsUnsafeHosts()
+{
+    string[] rejected =
+    [
+        "https://evil.example/api/",
+        "http://my.clockodo.com/api/",
+        "https://my.clockodo.com.evil.com/api/",
+        "https://clockodo.com.evil.com/api/",
+        "https://evilclockodo.com/api/",
+        "https://my.clockodo.com@evil.com/api/"
+    ];
+
+    foreach (var url in rejected)
+    {
+        AssertThrows<InvalidOperationException>(() => LoadOptions(new Dictionary<string, string?>
+        {
+            ["CLOCKODO_BASE_URL"] = url
+        }));
+    }
+
+    var local = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "http://127.0.0.1:8080/api/"
+    });
+    AssertEqual("127.0.0.1", local.BaseUrl.Host, "Local test hosts should remain allowed.");
+
+    var trailingDot = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://my.clockodo.com./api/"
+    });
+    Assert(trailingDot.BaseUrl.Host.StartsWith("my.clockodo.com", StringComparison.Ordinal), "Fully-qualified trailing dot should be accepted.");
+
+    var production = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://my.clockodo.com/api/"
+    });
+    AssertEqual("my.clockodo.com", production.BaseUrl.Host, "Clockodo production host should remain allowed.");
+
+    var overrideAllowed = LoadOptions(new Dictionary<string, string?>
+    {
+        ["CLOCKODO_BASE_URL"] = "https://evil.example/api/",
+        ["CLOCKODO_BASE_URL_ALLOW_ANY"] = "true"
+    });
+    AssertEqual("evil.example", overrideAllowed.BaseUrl.Host, "Explicit override should allow custom hosts.");
+
+    return Task.CompletedTask;
+}
+
+static ClockodoOptions LoadOptions(Dictionary<string, string?> values)
+{
+    var previous = new Dictionary<string, string?>();
+    foreach (var key in values.Keys.Concat(["CLOCKODO_BASE_URL_ALLOW_ANY"]))
+    {
+        previous[key] = Environment.GetEnvironmentVariable(key);
+    }
+
+    try
+    {
+        foreach (var (key, value) in values)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+
+        if (!values.ContainsKey("CLOCKODO_BASE_URL_ALLOW_ANY"))
+        {
+            Environment.SetEnvironmentVariable("CLOCKODO_BASE_URL_ALLOW_ANY", null);
+        }
+
+        return ClockodoOptions.FromEnvironment();
+    }
+    finally
+    {
+        foreach (var (key, value) in previous)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+}
+
+static async Task BlockedOperationsAreHiddenAndRejected()
+{
+    Assert(ClockodoOperationCatalog.IsBlocked(ClockodoOperationCatalog.FindByOperationId("createRegister")!), "createRegister should be blocklisted.");
+    Assert(!ClockodoOperationCatalog.Active.Any(operation => operation.OperationId == "createRegister"), "createRegister must not appear in active catalog.");
+
+    var operations = ClockodoTools.ListOperations(search: "createRegister");
+    Assert(!operations.Contains("createRegister", StringComparison.Ordinal), "Blocked operation must not appear in list results.");
+
+    AssertThrows<McpException>(() => ClockodoTools.GetOperation("createRegister"));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Write(
+            CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))),
+            operationId: "createRegister",
+            bodyJson: """{"companies_name":"Acme","name":"Test","email":"test@example.com"}"""));
+}
+
 static async Task RequestBuildsHeadersAndQuery()
 {
     var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
@@ -373,6 +476,62 @@ static async Task ReadOnlyModeBlocksWrites()
         ClockodoTools.Write(client, operationId: "createServiceV4", bodyJson: """{"name":"Blocked"}"""));
 }
 
+static async Task ReadOnlyModeBlocksBusinessWriteTools()
+{
+    var options = new ClockodoOptions(
+        "user@example.com",
+        "secret",
+        "clockodo-mcp;user@example.com",
+        "en",
+        new Uri("https://my.clockodo.com/api/"),
+        ReadOnly: true);
+
+    var client = new ClockodoClient(new HttpClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK))), options);
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.StartClock(client, customersId: 1, servicesId: 2));
+}
+
+static async Task TransportFailuresSurfaceAsMcpErrors()
+{
+    var client = CreateClient(new ThrowingHandler(new HttpRequestException("Network unreachable.")));
+
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Read(client, operationId: "getUsersMeV4"));
+
+    // An HttpClient-style timeout (token not cancelled) becomes a tool error.
+    var timeoutClient = CreateClient(new ThrowingHandler(new TaskCanceledException("Timed out.")));
+    await AssertThrowsAsync<McpException>(() =>
+        ClockodoTools.Read(timeoutClient, operationId: "getUsersMeV4"));
+}
+
+static async Task HostCancellationPropagates()
+{
+    var client = CreateClient(new ThrowingHandler(new TaskCanceledException("Timed out.")));
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+
+    // Genuine host cancellation must propagate, not be rewritten as a tool error.
+    await AssertThrowsAsync<OperationCanceledException>(() =>
+        ClockodoTools.Read(client, operationId: "getUsersMeV4", cancellationToken: cts.Token));
+}
+
+static async Task WriteValidationRejectsInvalidInput()
+{
+    var client = CreateClient(new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)));
+
+    var missingBody = await CaptureAsync<McpException>(() =>
+        ClockodoTools.Write(client, operationId: "createServiceV4"));
+    Assert(missingBody.Message.Contains("requires a JSON request body", StringComparison.Ordinal), "Expected required-body message.");
+
+    var emptyPath = await CaptureAsync<McpException>(() =>
+        ClockodoTools.Read(
+            client,
+            operationId: "getServiceByIdV4",
+            pathParametersJson: """{"id":""}"""));
+    Assert(emptyPath.Message.Contains("must not be empty", StringComparison.Ordinal), "Expected empty path-parameter message.");
+}
+
 static async Task StdioServerExposesAndInvokesTools()
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -385,11 +544,12 @@ static async Task StdioServerExposesAndInvokesTools()
     env["CLOCKODO_BASE_URL"] = fakeClockodo.BaseUri.ToString();
 
     var repoRoot = FindRepoRoot();
+    var devServer = Path.Combine(repoRoot, "scripts", "run-dev-mcp-server");
     var transport = new StdioClientTransport(new StdioClientTransportOptions
     {
         Name = "clockodo-mcp-test",
         Command = Environment.GetEnvironmentVariable("CLOCKODO_MCP_COMMAND")
-            ?? Path.Combine(repoRoot, "src", "Clockodo.Mcp", "bin", "Debug", "net10.0", "Clockodo.Mcp"),
+            ?? (File.Exists(devServer) ? devServer : Path.Combine(repoRoot, "src", "Clockodo.Mcp", "bin", "Debug", "net10.0", "Clockodo.Mcp")),
         Arguments = [],
         WorkingDirectory = repoRoot,
         InheritEnvironmentVariables = false,
@@ -544,13 +704,19 @@ static void AssertThrows<TException>(Action action)
 static async Task AssertThrowsAsync<TException>(Func<Task> action)
     where TException : Exception
 {
+    await CaptureAsync<TException>(action);
+}
+
+static async Task<TException> CaptureAsync<TException>(Func<Task> action)
+    where TException : Exception
+{
     try
     {
         await action();
     }
-    catch (TException)
+    catch (TException exception)
     {
-        return;
+        return exception;
     }
 
     throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
@@ -592,6 +758,12 @@ internal sealed class QueueHandler(params HttpResponseMessage[] responses) : Htt
 
         return Task.FromResult(responses.Dequeue());
     }
+}
+
+internal sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromException<HttpResponseMessage>(exception);
 }
 
 internal sealed class CapturedHttpRequest
